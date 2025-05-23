@@ -3,8 +3,13 @@
 import * as faceapi from 'face-api.js'
 import { useEffect, useRef, useState } from 'react'
 import Webcam from 'react-webcam'
-import { ProfileData, SavedFace, FaceRegistrationProps } from '../../types'
-import { uploadFaceDataToWalrus, generateFaceHash } from '../../utils/walrus'
+import { ProfileData, SavedFace, FaceRegistrationProps, FaceDescriptor } from '../../types'
+import { 
+  uploadFaceDataToTusky, 
+  generateFaceHash, 
+  prepareFaceData,
+  initializeTusky 
+} from '../../utils/tusky'
 import { useCurrentAccount } from '@mysten/dapp-kit'
 
 const videoConstraints = {
@@ -29,12 +34,13 @@ const detectFacesInImage = async (image: HTMLImageElement) => {
     .withFaceDescriptors()
 }
 
-export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegistrationProps) {
+export default function FaceRegistration({ onSuccess, onError, className }: FaceRegistrationProps) {
   const currentAccount = useCurrentAccount()
   const webcamRef = useRef<Webcam>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const [isModelLoaded, setIsModelLoaded] = useState(false)
+  const [isTuskyReady, setIsTuskyReady] = useState(false)
   const [isCapturing, setIsCapturing] = useState(false)
   const [isWebcamLoading, setIsWebcamLoading] = useState(true)
   const [webcamError, setWebcamError] = useState<string | null>(null)
@@ -43,15 +49,48 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
   const [selectedFaceIndex, setSelectedFaceIndex] = useState<number>(0)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<string>('')
+  const [savedFaces, setSavedFaces] = useState<SavedFace[]>([])
 
-  // Profile form state
+  // Profile form state with properly initialized socialLinks
   const [profileData, setProfileData] = useState<ProfileData>({
     name: '',
-    linkedin: '',
-    telegram: '',
-    twitter: '',
+    email: '',
+    bio: '',
     preferredToken: 'SUI',
+    suiAddress: currentAccount?.address || '',
+    socialLinks: {
+      linkedin: '',
+      twitter: '',
+      github: '',
+    },
   })
+
+  // Initialize Tusky client
+  useEffect(() => {
+    const initTusky = async () => {
+      try {
+        setUploadProgress('Initializing Tusky client...')
+        await initializeTusky()
+        setIsTuskyReady(true)
+        setUploadProgress('')
+      } catch (error) {
+        console.error('❌ Error initializing Tusky:', error)
+        setUploadProgress('❌ Tusky initialization failed. Please check your API key.')
+      }
+    }
+
+    initTusky()
+  }, [])
+
+  // Update SUI address when account changes
+  useEffect(() => {
+    if (currentAccount?.address) {
+      setProfileData(prev => ({
+        ...prev,
+        suiAddress: currentAccount.address
+      }))
+    }
+  }, [currentAccount?.address])
 
   // Load face-api.js models
   useEffect(() => {
@@ -181,8 +220,8 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
   }
 
   const registerFace = async () => {
-    if (!detectedFaces[selectedFaceIndex] || !currentAccount) {
-      alert('Please select a face and ensure you are connected to a wallet.')
+    if (!detectedFaces[selectedFaceIndex] || !currentAccount || !isTuskyReady) {
+      alert('Please select a face, ensure you are connected to a wallet, and wait for Tusky to initialize.')
       return
     }
 
@@ -198,50 +237,47 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
       const selectedDetection = detectedFaces[selectedFaceIndex]
       const descriptor = selectedDetection.descriptor
 
-      // Generate face hash for blockchain
-      const faceHash = generateFaceHash(descriptor);
+      // Prepare face descriptor data with correct structure
+      const faceDescriptor: FaceDescriptor = {
+        descriptor: descriptor,
+        landmarks: selectedDetection.landmarks,
+        detection: selectedDetection.detection
+      }
 
-      console.log("faceHash", faceHash);
-      
-      setUploadProgress('Uploading to Walrus storage...')
-      
-      // Upload to Walrus
-      const walrusResult = await uploadFaceDataToWalrus(descriptor, {
+      // Prepare face data for storage
+      const faceData = prepareFaceData(faceDescriptor, {
         ...profileData,
-        suiAddress: currentAccount.address,
-        faceHash,
-        timestamp: Date.now()
+        suiAddress: currentAccount.address
+      })
+      
+      setUploadProgress('Uploading to Tusky storage...')
+      
+      // Upload to Tusky
+      const uploadedFaceData = await uploadFaceDataToTusky(faceData, (progress) => {
+        setUploadProgress(`Uploading... ${progress.percentage.toFixed(1)}%`)
       })
 
-      if (!walrusResult) {
-        throw new Error('Failed to upload to Walrus storage')
-      }
+      setUploadProgress('Face registered successfully!')
 
-      setUploadProgress('Saving face registration...')
-
-      // Create new saved face
-      const newSavedFace: SavedFace = {
-        label: {
-          ...profileData,
-          walrusDataId: walrusResult.blobId,
-          humanId: faceHash
-        },
-        descriptor: descriptor
-      }
+      // Call the onSuccess callback with the uploaded face data
+      onSuccess(uploadedFaceData)
 
       // Add to saved faces
-      const updatedFaces = [...savedFaces, newSavedFace]
-      onFaceSaved(updatedFaces)
-
-      setUploadProgress('✅ Face registered successfully!')
+      const updatedFaces = [...savedFaces, uploadedFaceData]
+      setSavedFaces(updatedFaces)
       
       // Reset form
       setProfileData({
         name: '',
-        linkedin: '',
-        telegram: '',
-        twitter: '',
+        email: '',
+        bio: '',
         preferredToken: 'SUI',
+        suiAddress: currentAccount.address,
+        socialLinks: {
+          linkedin: '',
+          twitter: '',
+          github: '',
+        },
       })
       setCapturedImage(null)
       setDetectedFaces([])
@@ -252,7 +288,9 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
 
     } catch (error) {
       console.error('❌ Error registering face:', error)
-      setUploadProgress('❌ Error registering face. Please try again.')
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      setUploadProgress(`❌ Error registering face: ${errorMessage}`)
+      onError(errorMessage)
       setTimeout(() => {
         setUploadProgress('')
       }, 3000)
@@ -279,11 +317,11 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
   const deleteFace = (index: number) => {
     if (confirm('Are you sure you want to delete this registered face?')) {
       const updatedFaces = savedFaces.filter((_, i) => i !== index)
-      onFaceSaved(updatedFaces)
+      setSavedFaces(updatedFaces)
     }
   }
 
-  if (!isModelLoaded) {
+  if (!isModelLoaded || !isTuskyReady) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
@@ -292,7 +330,9 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
             <div></div>
             <div></div>
           </div>
-          <p className="mt-4 text-lg font-medium">Loading face recognition models...</p>
+          <p className="mt-4 text-lg font-medium">
+            {!isModelLoaded ? 'Loading face recognition models...' : 'Initializing Tusky storage...'}
+          </p>
           {uploadProgress && (
             <p className="mt-2 text-sm text-gray-600">{uploadProgress}</p>
           )}
@@ -345,6 +385,32 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
               <option value="ETH">ETH</option>
             </select>
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Email
+            </label>
+            <input
+              type="email"
+              value={profileData.email || ''}
+              onChange={(e) => setProfileData({ ...profileData, email: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
+              placeholder="your@email.com"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Bio
+            </label>
+            <input
+              type="text"
+              value={profileData.bio || ''}
+              onChange={(e) => setProfileData({ ...profileData, bio: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
+              placeholder="Short bio about yourself"
+            />
+          </div>
           
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -352,8 +418,14 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
             </label>
             <input
               type="url"
-              value={profileData.linkedin || ''}
-              onChange={(e) => setProfileData({ ...profileData, linkedin: e.target.value })}
+              value={profileData.socialLinks.linkedin || ''}
+              onChange={(e) => setProfileData({ 
+                ...profileData, 
+                socialLinks: { 
+                  ...profileData.socialLinks, 
+                  linkedin: e.target.value 
+                } 
+              })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
               placeholder="https://linkedin.com/in/username"
             />
@@ -365,8 +437,14 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
             </label>
             <input
               type="text"
-              value={profileData.twitter || ''}
-              onChange={(e) => setProfileData({ ...profileData, twitter: e.target.value })}
+              value={profileData.socialLinks.twitter || ''}
+              onChange={(e) => setProfileData({ 
+                ...profileData, 
+                socialLinks: { 
+                  ...profileData.socialLinks, 
+                  twitter: e.target.value 
+                } 
+              })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
               placeholder="@username"
             />
@@ -374,12 +452,18 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
           
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Telegram Handle
+              Github Handle
             </label>
             <input
               type="text"
-              value={profileData.telegram || ''}
-              onChange={(e) => setProfileData({ ...profileData, telegram: e.target.value })}
+              value={profileData.socialLinks.github || ''}
+              onChange={(e) => setProfileData({ 
+                ...profileData, 
+                socialLinks: { 
+                  ...profileData.socialLinks, 
+                  github: e.target.value 
+                } 
+              })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
               placeholder="@username"
             />
@@ -505,9 +589,9 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {savedFaces.map((face, index) => (
-              <div key={index} className="bg-white/60 rounded-lg p-4 border border-gray-200">
+              <div key={face.id} className="bg-white/60 rounded-lg p-4 border border-gray-200">
                 <div className="flex justify-between items-start mb-2">
-                  <h3 className="font-semibold">{face.label.name}</h3>
+                  <h3 className="font-semibold">{face.profileData.name}</h3>
                   <button
                     onClick={() => deleteFace(index)}
                     className="text-red-500 hover:text-red-700 text-sm"
@@ -517,23 +601,26 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
                 </div>
                 
                 <div className="space-y-1 text-sm text-gray-600">
-                  <p><span className="font-medium">Token:</span> {face.label.preferredToken}</p>
-                  {face.label.linkedin && (
+                  <p><span className="font-medium">Token:</span> {face.profileData.preferredToken}</p>
+                  {face.profileData.email && (
+                    <p><span className="font-medium">Email:</span> {face.profileData.email}</p>
+                  )}
+                  {face.profileData.socialLinks?.linkedin && (
                     <p><span className="font-medium">LinkedIn:</span> 
-                      <a href={face.label.linkedin} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline ml-1">
+                      <a href={face.profileData.socialLinks.linkedin} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline ml-1">
                         Profile
                       </a>
                     </p>
                   )}
-                  {face.label.twitter && (
-                    <p><span className="font-medium">Twitter:</span> {face.label.twitter}</p>
+                  {face.profileData.socialLinks?.twitter && (
+                    <p><span className="font-medium">Twitter:</span> {face.profileData.socialLinks.twitter}</p>
                   )}
-                  {face.label.telegram && (
-                    <p><span className="font-medium">Telegram:</span> {face.label.telegram}</p>
+                  {face.profileData.socialLinks?.github && (
+                    <p><span className="font-medium">Github:</span> {face.profileData.socialLinks.github}</p>
                   )}
-                  {face.label.walrusDataId && (
+                  {face.blobId && (
                     <p className="text-xs text-gray-500">
-                      <span className="font-medium">Walrus ID:</span> {face.label.walrusDataId.slice(0, 8)}...
+                      <span className="font-medium">Blob ID:</span> {face.blobId.slice(0, 8)}...
                     </p>
                   )}
                 </div>
@@ -550,7 +637,7 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
           <li>• Fill in your profile information</li>
           <li>• Position your face clearly in the camera frame</li>
           <li>• Ensure good lighting for accurate detection</li>
-          <li>• Your facial data will be encrypted and stored on Walrus</li>
+          <li>• Your facial data will be encrypted and stored on Tusky</li>
           <li>• You can register multiple faces if needed</li>
         </ul>
       </div>

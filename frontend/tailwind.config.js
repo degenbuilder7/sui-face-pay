@@ -1,6 +1,5 @@
-import type { Config } from "tailwindcss";
-
-const config: Config = {
+/** @type {import('tailwindcss').Config} */
+const config = {
   darkMode: ["class"],
   content: [
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
@@ -96,6 +95,10 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Face recognition custom colors
+        'face-primary': '#6366f1', // Indigo-500
+        'face-secondary': '#4f46e5', // Indigo-600  
+        'face-accent': '#8b5cf6', // Violet-500
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -121,4 +124,5 @@ const config: Config = {
   },
   plugins: [require("tailwindcss-animate")],
 };
-export default config;
+
+module.exports = config;

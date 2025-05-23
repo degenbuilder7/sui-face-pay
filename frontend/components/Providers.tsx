@@ -13,7 +13,15 @@ const { networkConfig } = createNetworkConfig({
   mainnet: { url: getFullnodeUrl('mainnet') },
 })
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 3,
+      retryDelay: 1000,
+      staleTime: 1000 * 60 * 5, // 5 minutes
+    },
+  },
+})
 
 interface ProvidersProps {
   children: React.ReactNode
@@ -21,7 +29,7 @@ interface ProvidersProps {
 
 export function Providers({ children }: ProvidersProps) {
   return (
-    // <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={queryClient}>
       <SuiClientProvider networks={networkConfig} defaultNetwork="testnet">
         <WalletProvider
           autoConnect={true}
@@ -32,6 +40,6 @@ export function Providers({ children }: ProvidersProps) {
           {children}
         </WalletProvider>
       </SuiClientProvider>
-    // </QueryClientProvider>
+    </QueryClientProvider>
   )
 } 

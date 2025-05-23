@@ -6,9 +6,12 @@ import FaceRegistration from '../components/face/FaceRegistration'
 import FaceRecognition from '../components/face/FaceRecognition'
 import { ConnectButton, useCurrentAccount } from '@mysten/dapp-kit'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import GoogleLoginButton from '@/components/auth/GoogleLoginButton'
+import { useZkLogin } from '@/hooks/useZkLogin'
 
 const Home: NextPage = () => {
   const currentAccount = useCurrentAccount()
+  const { user: zkLoginUser, isLoading: zkLoginLoading } = useZkLogin()
   const [savedFaces, setSavedFaces] = useState<SavedFace[]>([])
   const [currentView, setCurrentView] = useState<'register' | 'recognize'>('register')
   const [matchedFace, setMatchedFace] = useState<DetectedFace | null>(null)
@@ -116,7 +119,7 @@ const Home: NextPage = () => {
                 </button>
               </nav>
 
-              {/* Wallet Connection */}
+              {/* Wallet Connection & Auth */}
               <div className="flex items-center space-x-4">
                 {savedFaces.length > 0 && (
                   <button
@@ -126,6 +129,25 @@ const Home: NextPage = () => {
                     🗑️ Clear All
                   </button>
                 )}
+                
+                {/* Show zkLogin status if authenticated */}
+                {zkLoginUser && zkLoginUser.isAuthenticated ? (
+                  <div className="flex items-center space-x-2">
+                    <div className="text-sm text-green-600 dark:text-green-400">
+                      ✅ zkLogin: {zkLoginUser.provider}
+                    </div>
+                    {zkLoginUser.wallet && (
+                      <div className="text-xs text-gray-500">
+                        {zkLoginUser.wallet.slice(0, 6)}...{zkLoginUser.wallet.slice(-4)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500">
+                    🔐 zkLogin: Not connected
+                  </div>
+                )}
+                
                 <ConnectButton />
                 <ThemeToggle />
               </div>
@@ -163,7 +185,7 @@ const Home: NextPage = () => {
 
         {/* Main Content */}
         <main className="py-8">
-          {!currentAccount ? (
+          {!currentAccount && !zkLoginUser?.isAuthenticated ? (
             /* Not Connected State */
             <div className="max-w-4xl mx-auto px-4 text-center">
               <div className="glass-effect rounded-3xl p-12 dark:bg-slate-900/50">
@@ -196,8 +218,38 @@ const Home: NextPage = () => {
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <ConnectButton />
+                <div className="space-y-6">
+                  {/* zkLogin with Google */}
+                  <div className="max-w-md mx-auto">
+                    <h3 className="text-lg font-semibold mb-4 dark:text-white">
+                      🔐 Connect with zkLogin (Recommended)
+                    </h3>
+                    <GoogleLoginButton className="w-full" />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Secure authentication using zero-knowledge proofs
+                    </p>
+                  </div>
+
+                  {/* OR separator */}
+                  <div className="flex items-center justify-center">
+                    <div className="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
+                    <span className="px-4 text-sm text-gray-500 dark:text-gray-400">OR</span>
+                    <div className="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
+                  </div>
+
+                  {/* Traditional wallet connection */}
+                  <div className="max-w-md mx-auto">
+                    <h3 className="text-lg font-semibold mb-4 dark:text-white">
+                      💼 Connect Traditional Wallet
+                    </h3>
+                    <ConnectButton />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Connect using Sui, Petra, or other supported wallets
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-8">
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     Connect your SUI wallet to get started with facial recognition payments
                   </p>
