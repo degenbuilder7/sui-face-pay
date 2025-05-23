@@ -1,0 +1,557 @@
+'use client'
+
+import * as faceapi from 'face-api.js'
+import { useEffect, useRef, useState } from 'react'
+import Webcam from 'react-webcam'
+import { ProfileData, SavedFace, FaceRegistrationProps } from '../../types'
+import { uploadFaceDataToWalrus, generateFaceHash } from '../../utils/walrus'
+import { useCurrentAccount } from '@mysten/dapp-kit'
+
+const videoConstraints = {
+  width: 1280,
+  height: 720,
+  facingMode: 'user',
+}
+
+const createImageFromDataUrl = (dataUrl: string): Promise<HTMLImageElement> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = dataUrl
+  })
+}
+
+const detectFacesInImage = async (image: HTMLImageElement) => {
+  return await faceapi
+    .detectAllFaces(image, new faceapi.TinyFaceDetectorOptions())
+    .withFaceLandmarks()
+    .withFaceDescriptors()
+}
+
+export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegistrationProps) {
+  const currentAccount = useCurrentAccount()
+  const webcamRef = useRef<Webcam>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  const [isModelLoaded, setIsModelLoaded] = useState(false)
+  const [isCapturing, setIsCapturing] = useState(false)
+  const [isWebcamLoading, setIsWebcamLoading] = useState(true)
+  const [webcamError, setWebcamError] = useState<string | null>(null)
+  const [capturedImage, setCapturedImage] = useState<string | null>(null)
+  const [detectedFaces, setDetectedFaces] = useState<any[]>([])
+  const [selectedFaceIndex, setSelectedFaceIndex] = useState<number>(0)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<string>('')
+
+  // Profile form state
+  const [profileData, setProfileData] = useState<ProfileData>({
+    name: '',
+    linkedin: '',
+    telegram: '',
+    twitter: '',
+    preferredToken: 'SUI',
+  })
+
+  // Load face-api.js models
+  useEffect(() => {
+    const loadModels = async () => {
+      const MODEL_URL = '/models'
+      try {
+        setUploadProgress('Loading face detection models...')
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+        ])
+        setIsModelLoaded(true)
+        setUploadProgress('')
+      } catch (error) {
+        console.error('❌ Error loading face-api.js models:', error)
+        setUploadProgress('Error loading models. Please refresh the page.')
+      }
+    }
+
+    loadModels()
+  }, [])
+
+  const handleWebcamReady = () => {
+    setIsWebcamLoading(false)
+  }
+
+  const handleWebcamError = (error: string | DOMException) => {
+    console.error('❌ Webcam error:', error)
+    setIsWebcamLoading(false)
+    setWebcamError(
+      typeof error === 'string'
+        ? error
+        : 'Could not access webcam. Please grant camera permissions.'
+    )
+  }
+
+  const capturePhoto = async () => {
+    if (!webcamRef.current || !isModelLoaded) {
+      alert('Please wait for the camera and models to load.')
+      return
+    }
+
+    setIsCapturing(true)
+    setUploadProgress('Capturing and analyzing faces...')
+
+    try {
+      const imageSrc = webcamRef.current.getScreenshot()
+      if (!imageSrc) {
+        throw new Error('Failed to capture image')
+      }
+
+      setCapturedImage(imageSrc)
+
+      // Detect faces in the captured image
+      const image = await createImageFromDataUrl(imageSrc)
+      const detections = await detectFacesInImage(image)
+
+      if (detections.length === 0) {
+        alert('No faces detected. Please ensure your face is clearly visible and try again.')
+        setIsCapturing(false)
+        setUploadProgress('')
+        return
+      }
+
+      setDetectedFaces(detections)
+      setSelectedFaceIndex(0)
+      
+      // Draw faces on canvas
+      drawFacesOnCanvas(image, detections)
+      
+      setUploadProgress(`Found ${detections.length} face(s). Select one to register.`)
+    } catch (error) {
+      console.error('❌ Error capturing photo:', error)
+      alert('Error capturing photo. Please try again.')
+    } finally {
+      setIsCapturing(false)
+    }
+  }
+
+  const drawFacesOnCanvas = (image: HTMLImageElement, detections: any[]) => {
+    if (!canvasRef.current) return
+
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    canvas.width = image.width
+    canvas.height = image.height
+
+    // Draw the captured image
+    ctx.drawImage(image, 0, 0)
+
+    // Draw face detection boxes
+    detections.forEach((detection, index) => {
+      const box = detection.detection.box
+      const isSelected = index === selectedFaceIndex
+      
+      ctx.strokeStyle = isSelected ? '#10B981' : '#6366F1'
+      ctx.lineWidth = isSelected ? 4 : 2
+      ctx.strokeRect(box.x, box.y, box.width, box.height)
+
+      // Draw face number
+      ctx.fillStyle = isSelected ? '#10B981' : '#6366F1'
+      ctx.font = '16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto'
+      ctx.fillText(`Face ${index + 1}${isSelected ? ' (Selected)' : ''}`, box.x, box.y - 5)
+
+      // Draw landmarks
+      if (detection.landmarks) {
+        ctx.fillStyle = '#06B6D4'
+        detection.landmarks.positions.forEach((point: any) => {
+          ctx.beginPath()
+          ctx.arc(point.x, point.y, 1, 0, 2 * Math.PI)
+          ctx.fill()
+        })
+      }
+    })
+  }
+
+  const selectFace = (index: number) => {
+    setSelectedFaceIndex(index)
+    if (capturedImage && detectedFaces.length > 0) {
+      createImageFromDataUrl(capturedImage).then(image => {
+        drawFacesOnCanvas(image, detectedFaces)
+      })
+    }
+  }
+
+  const registerFace = async () => {
+    if (!detectedFaces[selectedFaceIndex] || !currentAccount) {
+      alert('Please select a face and ensure you are connected to a wallet.')
+      return
+    }
+
+    if (!profileData.name.trim()) {
+      alert('Please enter your name.')
+      return
+    }
+
+    setIsUploading(true)
+    setUploadProgress('Preparing face data...')
+
+    try {
+      const selectedDetection = detectedFaces[selectedFaceIndex]
+      const descriptor = selectedDetection.descriptor
+
+      // Generate face hash for blockchain
+      const faceHash = generateFaceHash(descriptor)
+      
+      setUploadProgress('Uploading to Walrus storage...')
+      
+      // Upload to Walrus
+      const walrusResult = await uploadFaceDataToWalrus(descriptor, {
+        ...profileData,
+        suiAddress: currentAccount.address,
+        faceHash,
+        timestamp: Date.now()
+      })
+
+      if (!walrusResult) {
+        throw new Error('Failed to upload to Walrus storage')
+      }
+
+      setUploadProgress('Saving face registration...')
+
+      // Create new saved face
+      const newSavedFace: SavedFace = {
+        label: {
+          ...profileData,
+          walrusDataId: walrusResult.blobId,
+          humanId: faceHash
+        },
+        descriptor: descriptor
+      }
+
+      // Add to saved faces
+      const updatedFaces = [...savedFaces, newSavedFace]
+      onFaceSaved(updatedFaces)
+
+      setUploadProgress('✅ Face registered successfully!')
+      
+      // Reset form
+      setProfileData({
+        name: '',
+        linkedin: '',
+        telegram: '',
+        twitter: '',
+        preferredToken: 'SUI',
+      })
+      setCapturedImage(null)
+      setDetectedFaces([])
+      
+      setTimeout(() => {
+        setUploadProgress('')
+      }, 3000)
+
+    } catch (error) {
+      console.error('❌ Error registering face:', error)
+      setUploadProgress('❌ Error registering face. Please try again.')
+      setTimeout(() => {
+        setUploadProgress('')
+      }, 3000)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  const retakePhoto = () => {
+    setCapturedImage(null)
+    setDetectedFaces([])
+    setSelectedFaceIndex(0)
+    setUploadProgress('')
+    
+    // Clear canvas
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d')
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+      }
+    }
+  }
+
+  const deleteFace = (index: number) => {
+    if (confirm('Are you sure you want to delete this registered face?')) {
+      const updatedFaces = savedFaces.filter((_, i) => i !== index)
+      onFaceSaved(updatedFaces)
+    }
+  }
+
+  if (!isModelLoaded) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="loading-dots">
+            <div></div>
+            <div></div>
+            <div></div>
+          </div>
+          <p className="mt-4 text-lg font-medium">Loading face recognition models...</p>
+          {uploadProgress && (
+            <p className="mt-2 text-sm text-gray-600">{uploadProgress}</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 space-y-6">
+      {/* Header */}
+      <div className="text-center">
+        <h1 className="text-3xl font-bold gradient-text mb-2">Face Registration</h1>
+        <p className="text-gray-600">
+          Register your face to enable secure payments through facial recognition
+        </p>
+      </div>
+
+      {/* Registration Form */}
+      <div className="glass-effect rounded-2xl p-6">
+        <h2 className="text-xl font-semibold mb-4">📝 Profile Information</h2>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Full Name *
+            </label>
+            <input
+              type="text"
+              value={profileData.name}
+              onChange={(e) => setProfileData({ ...profileData, name: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
+              placeholder="Enter your full name"
+              required
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Preferred Token
+            </label>
+            <select
+              value={profileData.preferredToken}
+              onChange={(e) => setProfileData({ ...profileData, preferredToken: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
+            >
+              <option value="SUI">SUI</option>
+              <option value="USDC">USDC</option>
+              <option value="USDT">USDT</option>
+              <option value="ETH">ETH</option>
+            </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              LinkedIn Profile
+            </label>
+            <input
+              type="url"
+              value={profileData.linkedin || ''}
+              onChange={(e) => setProfileData({ ...profileData, linkedin: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
+              placeholder="https://linkedin.com/in/username"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Twitter Handle
+            </label>
+            <input
+              type="text"
+              value={profileData.twitter || ''}
+              onChange={(e) => setProfileData({ ...profileData, twitter: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
+              placeholder="@username"
+            />
+          </div>
+          
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Telegram Handle
+            </label>
+            <input
+              type="text"
+              value={profileData.telegram || ''}
+              onChange={(e) => setProfileData({ ...profileData, telegram: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-face-primary focus:border-transparent"
+              placeholder="@username"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Camera Section */}
+      <div className="glass-effect rounded-2xl p-6">
+        <h2 className="text-xl font-semibold mb-4">📷 Facial Capture</h2>
+        
+        {!capturedImage ? (
+          <div className="space-y-4">
+            {/* Webcam Container */}
+            <div className="relative mx-auto w-fit">
+              {!webcamError ? (
+                <>
+                  {isWebcamLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded-lg z-10">
+                      <div className="text-center">
+                        <div className="loading-dots">
+                          <div></div>
+                          <div></div>
+                          <div></div>
+                        </div>
+                        <p className="mt-2">Loading camera...</p>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <Webcam
+                    audio={false}
+                    ref={webcamRef}
+                    screenshotFormat="image/jpeg"
+                    videoConstraints={videoConstraints}
+                    onUserMedia={handleWebcamReady}
+                    onUserMediaError={handleWebcamError}
+                    className="rounded-lg border-2 border-face-primary"
+                  />
+                </>
+              ) : (
+                <div className="text-center p-8 border-2 border-dashed border-gray-300 rounded-lg">
+                  <p className="text-red-500 mb-4">{webcamError}</p>
+                  <p className="text-gray-500">Please grant camera permissions and refresh the page</p>
+                </div>
+              )}
+            </div>
+
+            {/* Capture Button */}
+            <div className="text-center">
+              <button
+                onClick={capturePhoto}
+                disabled={isCapturing || !!webcamError || !isModelLoaded}
+                className="px-6 py-3 bg-face-primary text-white rounded-lg hover:bg-face-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isCapturing ? '📸 Capturing...' : '📸 Capture Photo'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Captured Image and Face Selection */
+          <div className="space-y-4">
+            <div className="relative mx-auto w-fit">
+              <canvas
+                ref={canvasRef}
+                className="max-w-full h-auto rounded-lg border-2 border-face-primary"
+              />
+            </div>
+
+            {/* Face Selection */}
+            {detectedFaces.length > 1 && (
+              <div className="text-center space-y-2">
+                <p className="text-sm text-gray-600">Multiple faces detected. Select one:</p>
+                <div className="flex justify-center space-x-2">
+                  {detectedFaces.map((_, index) => (
+                    <button
+                      key={index}
+                      onClick={() => selectFace(index)}
+                      className={`px-3 py-1 rounded-lg text-sm ${
+                        selectedFaceIndex === index
+                          ? 'bg-face-primary text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      Face {index + 1}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex justify-center space-x-4">
+              <button
+                onClick={retakePhoto}
+                className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
+              >
+                🔄 Retake
+              </button>
+              <button
+                onClick={registerFace}
+                disabled={isUploading || !profileData.name.trim()}
+                className="px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUploading ? '⏳ Registering...' : '✅ Register Face'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Progress/Status */}
+        {uploadProgress && (
+          <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+            <p className="text-sm text-blue-700">{uploadProgress}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Registered Faces */}
+      {savedFaces.length > 0 && (
+        <div className="glass-effect rounded-2xl p-6">
+          <h2 className="text-xl font-semibold mb-4">👥 Registered Faces ({savedFaces.length})</h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {savedFaces.map((face, index) => (
+              <div key={index} className="bg-white/60 rounded-lg p-4 border border-gray-200">
+                <div className="flex justify-between items-start mb-2">
+                  <h3 className="font-semibold">{face.label.name}</h3>
+                  <button
+                    onClick={() => deleteFace(index)}
+                    className="text-red-500 hover:text-red-700 text-sm"
+                  >
+                    🗑️
+                  </button>
+                </div>
+                
+                <div className="space-y-1 text-sm text-gray-600">
+                  <p><span className="font-medium">Token:</span> {face.label.preferredToken}</p>
+                  {face.label.linkedin && (
+                    <p><span className="font-medium">LinkedIn:</span> 
+                      <a href={face.label.linkedin} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline ml-1">
+                        Profile
+                      </a>
+                    </p>
+                  )}
+                  {face.label.twitter && (
+                    <p><span className="font-medium">Twitter:</span> {face.label.twitter}</p>
+                  )}
+                  {face.label.telegram && (
+                    <p><span className="font-medium">Telegram:</span> {face.label.telegram}</p>
+                  )}
+                  {face.label.walrusDataId && (
+                    <p className="text-xs text-gray-500">
+                      <span className="font-medium">Walrus ID:</span> {face.label.walrusDataId.slice(0, 8)}...
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Instructions */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h3 className="font-medium text-blue-900 mb-2">📋 Instructions</h3>
+        <ul className="text-sm text-blue-700 space-y-1">
+          <li>• Fill in your profile information</li>
+          <li>• Position your face clearly in the camera frame</li>
+          <li>• Ensure good lighting for accurate detection</li>
+          <li>• Your facial data will be encrypted and stored on Walrus</li>
+          <li>• You can register multiple faces if needed</li>
+        </ul>
+      </div>
+    </div>
+  )
+} 
