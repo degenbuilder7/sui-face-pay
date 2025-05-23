@@ -35,8 +35,8 @@ export interface WalrusBlob {
   timestamp: number
 }
 
-const WALRUS_PUBLISHER_URL = process.env.NEXT_PUBLIC_WALRUS_PUBLISHER_URL || 'https://publisher.walrus-testnet.walrus.space'
-const WALRUS_AGGREGATOR_URL = process.env.NEXT_PUBLIC_WALRUS_AGGREGATOR_URL || 'https://aggregator.walrus-testnet.walrus.space'
+const WALRUS_PUBLISHER_URL = process.env.NEXT_PUBLIC_WALRUS_PUBLISHER_URL || 'https://aggregator.testnet.walrus.mirai.cloud'
+const WALRUS_AGGREGATOR_URL = process.env.NEXT_PUBLIC_WALRUS_AGGREGATOR_URL || 'https://publisher.testnet.walrus.atalma.io'
 
 /**
  * Upload data to Walrus storage
@@ -48,7 +48,7 @@ export async function uploadToWalrus(data: any): Promise<{ blobId: string; size:
     const jsonData = JSON.stringify(data)
     const blob = new Blob([jsonData], { type: 'application/json' })
     
-    const response = await fetch(`${WALRUS_PUBLISHER_URL}/v1/store?epochs=5`, {
+    const response = await fetch(`${WALRUS_PUBLISHER_URL}/v1/store`, {
       method: 'PUT',
       body: blob,
       headers: {

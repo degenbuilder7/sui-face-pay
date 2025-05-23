@@ -3,7 +3,7 @@
 import * as faceapi from 'face-api.js'
 import { useEffect, useRef, useState } from 'react'
 import Webcam from 'react-webcam'
-// import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition'
+
 import { ProfileData, SavedFace, DetectedFace, FaceRecognitionProps } from '../../types'
 import { retrieveFaceDataFromWalrus, generateFaceHash } from '../../utils/walrus'
 import { useCurrentAccount } from '@mysten/dapp-kit'
@@ -89,29 +89,6 @@ export default function FaceRecognition({ savedFaces, onFaceMatched }: FaceRecog
   }, [])
 
   // Handle speech transcript
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout | null = null
-
-    if (transcript && isScanning) {
-      if (timeoutId) clearTimeout(timeoutId)
-
-      timeoutId = setTimeout(() => {
-        const lowerTranscript = transcript.toLowerCase()
-        if (
-          (lowerTranscript.includes('pay') || lowerTranscript.includes('send')) &&
-          matchedProfile
-        ) {
-          setCurrentTranscript(transcript)
-          handlePaymentCommand(transcript)
-        }
-        resetTranscript()
-      }, 2000)
-    }
-
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId)
-    }
-  }, [transcript, isScanning, matchedProfile])
 
   const handleWebcamReady = () => {
     setIsWebcamLoading(false)

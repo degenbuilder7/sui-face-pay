@@ -199,7 +199,9 @@ export default function FaceRegistration({ onFaceSaved, savedFaces }: FaceRegist
       const descriptor = selectedDetection.descriptor
 
       // Generate face hash for blockchain
-      const faceHash = generateFaceHash(descriptor)
+      const faceHash = generateFaceHash(descriptor);
+
+      console.log("faceHash", faceHash);
       
       setUploadProgress('Uploading to Walrus storage...')
       
