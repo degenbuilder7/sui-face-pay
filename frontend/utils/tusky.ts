@@ -1,9 +1,5 @@
-import { Tusky } from "@tusky-io/ts-sdk";
+import { Tusky } from "@tusky-io/ts-sdk/web";
 import { 
-  TuskyConfig, 
-  TuskyVault, 
-  TuskyFile, 
-  TuskyUploadOptions, 
   TuskyUploadProgress,
   SavedFace,
   ProfileData,
@@ -11,165 +7,106 @@ import {
 } from '../types'
 
 // =============================================================================
-// BROWSER-COMPATIBLE TUSKY CLIENT
+// TUSKY SDK CLIENT MANAGEMENT
 // =============================================================================
+
+interface TuskyInitOptions {
+  signPersonalMessage: any
+  account: any
+  password?: string
+}
 
 interface TuskyResponse<T = any> {
   success: boolean
   data?: T
   error?: string
-}
-
-class BrowserTuskyClient {
-  private apiKey: string
-  private baseUrl: string = 'https://api.tusky.io'
-
-  constructor(apiKey: string) {
-    this.apiKey = apiKey
-  }
-
-  private async request<T>(
-    endpoint: string, 
-    options: RequestInit = {}
-  ): Promise<TuskyResponse<T>> {
-    try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        ...options,
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          ...options.headers,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      const data = await response.json()
-      return { success: true, data }
-    } catch (error) {
-      console.error('Tusky API request failed:', error)
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }
-    }
-  }
-
-  async createVault(name: string, options: { encrypted?: boolean; description?: string } = {}): Promise<TuskyVault | null> {
-    const response = await this.request<TuskyVault>('/vaults', {
-      method: 'POST',
-      body: JSON.stringify({
-        name,
-        encrypted: options.encrypted !== false,
-        description: options.description || '',
-      }),
-    })
-
-    return response.success ? response.data! : null
-  }
-
-  async listVaults(): Promise<TuskyVault[]> {
-    const response = await this.request<{ items: TuskyVault[] }>('/vaults')
-    return response.success ? response.data!.items : []
-  }
-
-  async uploadFile(vaultId: string, file: Blob, options: Partial<TuskyUploadOptions> = {}): Promise<string | null> {
-    try {
-      const formData = new FormData()
-      formData.append('file', file)
-      formData.append('vaultId', vaultId)
-      
-      if (options.name) formData.append('name', options.name)
-      if (options.mimeType) formData.append('mimeType', options.mimeType)
-
-      const response = await fetch(`${this.baseUrl}/files/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-        },
-        body: formData,
-      })
-
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`)
-      }
-
-      const result = await response.json()
-      return result.fileId || result.id
-    } catch (error) {
-      console.error('File upload failed:', error)
-      return null
-    }
-  }
-
-  async downloadFile(fileId: string): Promise<ArrayBuffer | null> {
-    try {
-      const response = await fetch(`${this.baseUrl}/files/${fileId}/download`, {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error(`Download failed: ${response.statusText}`)
-      }
-
-      return await response.arrayBuffer()
-    } catch (error) {
-      console.error('File download failed:', error)
-      return null
-    }
-  }
-
-  async getFile(fileId: string): Promise<TuskyFile | null> {
-    const response = await this.request<TuskyFile>(`/files/${fileId}`)
-    return response.success ? response.data! : null
-  }
-
-  async listFiles(vaultId: string): Promise<TuskyFile[]> {
-    const response = await this.request<{ items: TuskyFile[] }>(`/files?vaultId=${vaultId}`)
-    return response.success ? response.data!.items : []
-  }
-
-  async deleteFile(fileId: string): Promise<boolean> {
-    const response = await this.request(`/files/${fileId}`, { method: 'DELETE' })
-    return response.success
-  }
+  logs?: string[]
 }
 
 // =============================================================================
 // CLIENT MANAGEMENT
 // =============================================================================
 
-let tuskyClient: BrowserTuskyClient | null = null
+let tuskyClient: Tusky | null = null
+const logs: string[] = []
+
+const addLog = (message: string, methodCall?: string) => {
+  const timestamp = new Date().toLocaleTimeString();
+  if (methodCall) {
+    logs.push(`${timestamp}: ${message}`, `  → ${methodCall}`)
+  } else {
+    logs.push(`${timestamp}: ${message}`)
+  }
+  console.log(`🐋 Tusky: ${message}${methodCall ? ` - ${methodCall}` : ''}`)
+}
 
 /**
- * Initialize Tusky client with API key
+ * Initialize Tusky client with SUI wallet authentication
  */
-export const initializeTusky = async (config?: TuskyConfig): Promise<BrowserTuskyClient> => {
-  if (tuskyClient && !config) {
-    return tuskyClient
-  }
+export const initializeTusky = async (options: TuskyInitOptions): Promise<TuskyResponse<Tusky>> => {
+  try {
+    if (tuskyClient) {
+      return { success: true, data: tuskyClient, logs: [...logs] }
+    }
 
-  const apiKey = process.env.NEXT_PUBLIC_TUSKY_API_KEY
-  if (!apiKey) {
-    throw new Error('Tusky API key is required. Set NEXT_PUBLIC_TUSKY_API_KEY environment variable.')
-  }
+    const { signPersonalMessage, account, password } = options
 
-  tuskyClient = new BrowserTuskyClient(apiKey)
+    if (!account) {
+      throw new Error('SUI account is required for Tusky initialization')
+    }
+
+    addLog('Initializing Tusky with wallet...', 'new Tusky({ wallet: { signPersonalMessage, account } })')
+    
+    // Initialize Tusky with wallet authentication
+    const tusky = new Tusky({ wallet: { signPersonalMessage, account: account as any } })
+    
+    addLog('Signing in with wallet...', 'tusky.auth.signIn()')
+    await tusky.auth.signIn()
+    
+    // Set up encryption if password provided
+    if (password) {
+      addLog('Setting up password encryption...', 'tusky.addEncrypter({ password, keystore: true })')
+      await tusky.addEncrypter({ password: password, keystore: true })
+    } else {
+      // Use keystore encryption without password
+      addLog('Setting up keystore encryption...', 'tusky.addEncrypter({ keystore: true })')
+      await tusky.addEncrypter({ keystore: true })
+    }
+    
+    tuskyClient = tusky
+    addLog('Tusky initialized successfully')
+    
+    return { success: true, data: tusky, logs: [...logs] }
+    
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    addLog(`Error initializing Tusky: ${errorMessage}`)
+    console.error('❌ Tusky initialization failed:', error)
+    return { 
+      success: false, 
+      error: errorMessage,
+      logs: [...logs]
+    }
+  }
+}
+
+/**
+ * Get current Tusky client instance
+ */
+export const getTuskyClient = (): Tusky | null => {
   return tuskyClient
 }
 
 /**
- * Get or create Tusky client instance
+ * Sign out from Tusky
  */
-export const getTuskyClient = async (): Promise<BrowserTuskyClient> => {
-  if (!tuskyClient) {
-    return await initializeTusky()
+export const signOutTusky = () => {
+  if (tuskyClient) {
+    addLog('Signing out from Tusky...', 'tusky.signOut()')
+    tuskyClient.signOut()
+    tuskyClient = null
+    addLog('Signed out successfully')
   }
-  return tuskyClient
 }
 
 // =============================================================================
@@ -179,32 +116,45 @@ export const getTuskyClient = async (): Promise<BrowserTuskyClient> => {
 /**
  * Create or get the FacePay vault for storing face data
  */
-export const getFacePayVault = async (): Promise<TuskyVault> => {
-  const tusky = await getTuskyClient()
+export const getFacePayVault = async (): Promise<TuskyResponse<any>> => {
+  const tusky = getTuskyClient()
   
   try {
-    // Try to find existing FacePay vault
-    const vaults = await tusky.listVaults()
-    const existingVault = vaults.find(vault => vault.name === 'FacePay-Faces')
+    if (!tusky) {
+      throw new Error('Tusky client not initialized')
+    }
+    
+    const vaultName = 'FacePay-Faces'
+    
+    addLog('Listing vaults...', 'tusky.vault.listAll()')
+    const vaults = await tusky.vault.listAll()
+    const existingVault = vaults.find((vault: any) => vault.name === vaultName)
     
     if (existingVault) {
-      return existingVault
+      addLog(`Found existing vault: ${vaultName}`)
+      return { success: true, data: existingVault, logs: [...logs] }
     }
     
     // Create new vault if not found
-    const vault = await tusky.createVault('FacePay-Faces', {
-      description: 'SUI FacePay facial recognition data storage',
-      encrypted: true,
-    })
+    addLog(`Creating new vault: ${vaultName}`, `tusky.vault.create("${vaultName}", { encrypted: true })`)
+    const newVault = await tusky.vault.create(vaultName, { encrypted: true })
     
-    if (!vault) {
+    if (!newVault) {
       throw new Error('Failed to create vault')
     }
     
-    return vault
+    addLog(`Vault created successfully: ${newVault.id}`)
+    return { success: true, data: newVault, logs: [...logs] }
+    
   } catch (error) {
-    console.error('Error managing FacePay vault:', error)
-    throw new Error(`Failed to create/access FacePay vault: ${error}`)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    addLog(`Error managing FacePay vault: ${errorMessage}`)
+    console.error('❌ Error managing FacePay vault:', error)
+    return {
+      success: false,
+      error: errorMessage,
+      logs: [...logs]
+    }
   }
 }
 

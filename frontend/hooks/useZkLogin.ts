@@ -27,36 +27,72 @@ export function useZkLogin(): ZkLoginState {
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
-  // Check authentication status on mount
+  // Check authentication status on mount and poll periodically
   useEffect(() => {
     checkAuthStatus()
-  }, [])
+    
+    // Poll for auth status every 2 seconds to catch zkLogin completion
+    const pollInterval = setInterval(() => {
+      if (!user || !user.isAuthenticated) {
+        checkAuthStatus()
+      }
+    }, 2000)
+    
+    // Cleanup polling on unmount or when user is authenticated
+    return () => clearInterval(pollInterval)
+  }, [user?.isAuthenticated])
+
+  // Listen for route changes to re-check auth status
+  useEffect(() => {
+    const handleRouteChange = () => {
+      // Re-check auth status when route changes (e.g., coming back from OAuth)
+      setTimeout(() => checkAuthStatus(), 500)
+    }
+
+    router.events.on('routeChangeComplete', handleRouteChange)
+    return () => {
+      router.events.off('routeChangeComplete', handleRouteChange)
+    }
+  }, [router.events])
 
   const checkAuthStatus = async () => {
     try {
       setIsLoading(true)
       setError(null)
 
-      const response = await fetch('/api/auth/user', {
+      // Use the Shinami /api/auth/me endpoint instead of /api/auth/user
+      const response = await fetch('/api/auth/me', {
         method: 'GET',
         credentials: 'include',
       })
 
       if (response.ok) {
         const userData = await response.json()
-        if (userData.isAuthenticated) {
-          setUser({
-            wallet: userData.wallet,
-            provider: userData.provider,
-            email: userData.email,
-            name: userData.name,
-            picture: userData.picture,
+        console.log('✅ Auth status response:', userData)
+        
+        // Check if user is authenticated (zkLogin format)
+        if (userData && (userData.wallet || userData.address)) {
+          // Extract user info from JWT claims if available
+          const jwtClaims = userData.jwtClaims || {}
+          console.log('📋 JWT Claims:', jwtClaims)
+          
+          const zkLoginUser = {
+            wallet: userData.wallet || userData.address,
+            provider: userData.oidProvider || 'unknown',
+            email: jwtClaims.email || userData.email,
+            name: jwtClaims.name || userData.name,
+            picture: jwtClaims.picture || userData.picture,
             isAuthenticated: true,
-          })
+          }
+          
+          console.log('👤 Setting zkLogin user:', zkLoginUser)
+          setUser(zkLoginUser)
         } else {
+          console.log('❌ No wallet/address found in userData, setting user to null')
           setUser(null)
         }
       } else {
+        console.log('Auth check failed:', response.status, response.statusText)
         setUser(null)
       }
     } catch (err) {
@@ -95,7 +131,8 @@ export function useZkLogin(): ZkLoginState {
 
       if (response.ok) {
         setUser(null)
-        router.push('/auth/login')
+        // Redirect to home instead of login page
+        router.push('/')
       } else {
         throw new Error('Logout failed')
       }

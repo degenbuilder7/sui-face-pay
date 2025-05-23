@@ -4,13 +4,8 @@ import * as faceapi from 'face-api.js'
 import { useEffect, useRef, useState } from 'react'
 import Webcam from 'react-webcam'
 import { ProfileData, SavedFace, FaceRegistrationProps, FaceDescriptor } from '../../types'
-import { 
-  uploadFaceDataToTusky, 
-  generateFaceHash, 
-  prepareFaceData,
-  initializeTusky 
-} from '../../utils/tusky'
 import { useCurrentAccount } from '@mysten/dapp-kit'
+import { useTusky } from '../../hooks/useTusky'
 
 const videoConstraints = {
   width: 1280,
@@ -39,17 +34,19 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
   const webcamRef = useRef<Webcam>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
+  // Use the Tusky hook
+  const tusky = useTusky()
+
   const [isModelLoaded, setIsModelLoaded] = useState(false)
-  const [isTuskyReady, setIsTuskyReady] = useState(false)
   const [isCapturing, setIsCapturing] = useState(false)
   const [isWebcamLoading, setIsWebcamLoading] = useState(true)
   const [webcamError, setWebcamError] = useState<string | null>(null)
   const [capturedImage, setCapturedImage] = useState<string | null>(null)
   const [detectedFaces, setDetectedFaces] = useState<any[]>([])
   const [selectedFaceIndex, setSelectedFaceIndex] = useState<number>(0)
-  const [isUploading, setIsUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState<string>('')
   const [savedFaces, setSavedFaces] = useState<SavedFace[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState('')
 
   // Profile form state with properly initialized socialLinks
   const [profileData, setProfileData] = useState<ProfileData>({
@@ -65,22 +62,14 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
     },
   })
 
-  // Initialize Tusky client
+  // Initialize Tusky when account is available
   useEffect(() => {
-    const initTusky = async () => {
-      try {
-        setUploadProgress('Initializing Tusky client...')
-        await initializeTusky()
-        setIsTuskyReady(true)
-        setUploadProgress('')
-      } catch (error) {
-        console.error('❌ Error initializing Tusky:', error)
-        setUploadProgress('❌ Tusky initialization failed. Please check your API key.')
-      }
+    if (currentAccount && !tusky.state.isInitialized && !tusky.state.isLoading) {
+      // Prompt for password (optional)
+      const password = window.prompt("Enter password for encrypted storage (optional):")
+      tusky.initializeTusky(password || undefined)
     }
-
-    initTusky()
-  }, [])
+  }, [currentAccount, tusky])
 
   // Update SUI address when account changes
   useEffect(() => {
@@ -97,17 +86,16 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
     const loadModels = async () => {
       const MODEL_URL = '/models'
       try {
-        setUploadProgress('Loading face detection models...')
+        console.log('Loading face detection models...')
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
           faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
         ])
         setIsModelLoaded(true)
-        setUploadProgress('')
+        console.log('Face detection models loaded successfully')
       } catch (error) {
         console.error('❌ Error loading face-api.js models:', error)
-        setUploadProgress('Error loading models. Please refresh the page.')
       }
     }
 
@@ -135,40 +123,36 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
     }
 
     setIsCapturing(true)
-    setUploadProgress('Capturing and analyzing faces...')
+          try {
+        const imageSrc = webcamRef.current.getScreenshot()
+        if (!imageSrc) {
+          throw new Error('Failed to capture image')
+        }
 
-    try {
-      const imageSrc = webcamRef.current.getScreenshot()
-      if (!imageSrc) {
-        throw new Error('Failed to capture image')
-      }
+        setCapturedImage(imageSrc)
 
-      setCapturedImage(imageSrc)
+        // Detect faces in the captured image
+        const image = await createImageFromDataUrl(imageSrc)
+        const detections = await detectFacesInImage(image)
 
-      // Detect faces in the captured image
-      const image = await createImageFromDataUrl(imageSrc)
-      const detections = await detectFacesInImage(image)
+        if (detections.length === 0) {
+          alert('No faces detected. Please ensure your face is clearly visible and try again.')
+          setIsCapturing(false)
+          return
+        }
 
-      if (detections.length === 0) {
-        alert('No faces detected. Please ensure your face is clearly visible and try again.')
+        setDetectedFaces(detections)
+        setSelectedFaceIndex(0)
+        
+        // Draw faces on canvas
+        drawFacesOnCanvas(image, detections)
+        
+      } catch (error) {
+        console.error('❌ Error capturing photo:', error)
+        alert('Error capturing photo. Please try again.')
+      } finally {
         setIsCapturing(false)
-        setUploadProgress('')
-        return
       }
-
-      setDetectedFaces(detections)
-      setSelectedFaceIndex(0)
-      
-      // Draw faces on canvas
-      drawFacesOnCanvas(image, detections)
-      
-      setUploadProgress(`Found ${detections.length} face(s). Select one to register.`)
-    } catch (error) {
-      console.error('❌ Error capturing photo:', error)
-      alert('Error capturing photo. Please try again.')
-    } finally {
-      setIsCapturing(false)
-    }
   }
 
   const drawFacesOnCanvas = (image: HTMLImageElement, detections: any[]) => {
@@ -219,8 +203,40 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
     }
   }
 
+  // Helper function to generate face hash
+  const generateFaceHash = (descriptor: Float32Array): string => {
+    const descriptorString = Array.from(descriptor).join(',')
+    let hash = 0
+    for (let i = 0; i < descriptorString.length; i++) {
+      const char = descriptorString.charCodeAt(i)
+      hash = ((hash << 5) - hash) + char
+      hash = hash & hash
+    }
+    return Math.abs(hash).toString(36)
+  }
+
+  // Helper function to prepare face data
+  const prepareFaceData = (faceDescriptor: FaceDescriptor, profileData: ProfileData): SavedFace => {
+    const id = crypto.randomUUID()
+    const hash = generateFaceHash(faceDescriptor.descriptor)
+    
+    return {
+      id,
+      hash,
+      descriptor: Array.from(faceDescriptor.descriptor),
+      landmarks: faceDescriptor.landmarks!,
+      detection: faceDescriptor.detection!,
+      profileData,
+      tuskyFileId: '',
+      tuskyVaultId: '',
+      blobId: undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
   const registerFace = async () => {
-    if (!detectedFaces[selectedFaceIndex] || !currentAccount || !isTuskyReady) {
+    if (!detectedFaces[selectedFaceIndex] || !currentAccount || !tusky.isReady) {
       alert('Please select a face, ensure you are connected to a wallet, and wait for Tusky to initialize.')
       return
     }
@@ -253,47 +269,49 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
       setUploadProgress('Uploading to Tusky storage...')
       
       // Upload to Tusky
-      const uploadedFaceData = await uploadFaceDataToTusky(faceData, (progress) => {
-        setUploadProgress(`Uploading... ${progress.percentage.toFixed(1)}%`)
-      })
+      const fileId = await tusky.uploadFaceData(faceData)
 
-      setUploadProgress('Face registered successfully!')
+      if (fileId) {
+        const uploadedFaceData = {
+          ...faceData,
+          tuskyFileId: fileId,
+          tuskyVaultId: tusky.state.vaultId || '',
+          updatedAt: new Date().toISOString(),
+        }
 
-      // Call the onSuccess callback with the uploaded face data
-      onSuccess(uploadedFaceData)
+        setUploadProgress('Registration complete!')
 
-      // Add to saved faces
-      const updatedFaces = [...savedFaces, uploadedFaceData]
-      setSavedFaces(updatedFaces)
-      
-      // Reset form
-      setProfileData({
-        name: '',
-        email: '',
-        bio: '',
-        preferredToken: 'SUI',
-        suiAddress: currentAccount.address,
-        socialLinks: {
-          linkedin: '',
-          twitter: '',
-          github: '',
-        },
-      })
-      setCapturedImage(null)
-      setDetectedFaces([])
-      
-      setTimeout(() => {
-        setUploadProgress('')
-      }, 3000)
+        // Call the onSuccess callback with the uploaded face data
+        onSuccess(uploadedFaceData)
+
+        // Add to saved faces
+        const updatedFaces = [...savedFaces, uploadedFaceData]
+        setSavedFaces(updatedFaces)
+        
+        // Reset form
+        setProfileData({
+          name: '',
+          email: '',
+          bio: '',
+          preferredToken: 'SUI',
+          suiAddress: currentAccount.address,
+          socialLinks: {
+            linkedin: '',
+            twitter: '',
+            github: '',
+          },
+        })
+        setCapturedImage(null)
+        setDetectedFaces([])
+      } else {
+        throw new Error('Failed to upload face data')
+      }
 
     } catch (error) {
       console.error('❌ Error registering face:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-      setUploadProgress(`❌ Error registering face: ${errorMessage}`)
+      setUploadProgress('')
       onError(errorMessage)
-      setTimeout(() => {
-        setUploadProgress('')
-      }, 3000)
     } finally {
       setIsUploading(false)
     }
@@ -321,7 +339,7 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
     }
   }
 
-  if (!isModelLoaded || !isTuskyReady) {
+  if (!isModelLoaded || !tusky.isReady) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
@@ -333,8 +351,17 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
           <p className="mt-4 text-lg font-medium">
             {!isModelLoaded ? 'Loading face recognition models...' : 'Initializing Tusky storage...'}
           </p>
-          {uploadProgress && (
-            <p className="mt-2 text-sm text-gray-600">{uploadProgress}</p>
+          {tusky.state.error && (
+            <p className="mt-2 text-sm text-red-600">{tusky.state.error}</p>
+          )}
+          {tusky.state.logs.length > 0 && (
+            <div className="mt-4 max-h-32 overflow-y-auto text-xs text-gray-500">
+              {tusky.state.logs.slice(-5).map((log, index) => (
+                <div key={index} className={log.startsWith('  →') ? 'text-blue-600 pl-4' : ''}>
+                  {log}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
