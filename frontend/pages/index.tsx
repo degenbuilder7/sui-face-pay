@@ -342,8 +342,17 @@ const Home: NextPage = () => {
               {/* Main Content Area */}
               {currentView === 'register' ? (
                 <FaceRegistration
-                  onFaceSaved={handleFaceSaved}
-                  savedFaces={savedFaces}
+                  onSuccess={(savedFace: SavedFace) => {
+                    // Add the new face to our saved faces
+                    const updatedFaces = [...savedFaces, savedFace]
+                    setSavedFaces(updatedFaces)
+                    console.log('✅ Face registered successfully:', savedFace.profileData.name)
+                  }}
+                  onError={(error: string) => {
+                    console.error('❌ Face registration error:', error)
+                    // You can add toast notification here
+                    alert(`Face registration failed: ${error}`)
+                  }}
                 />
               ) : (
                 <FaceRecognition

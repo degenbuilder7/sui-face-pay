@@ -39,18 +39,18 @@ export default withNewZkLoginSession(
           </div>
 
           <div className="space-y-4">
-            {GOOGLE_CLIENT_ID && (
+        {GOOGLE_CLIENT_ID && (
               <Button
-                onClick={() => {
-                  void router.replace(
-                    getGoogleAuthUrl(
-                      session,
-                      GOOGLE_CLIENT_ID!,
-                      "google", // Update if moved to another path
-                      redirectTo,
-                    ),
-                  );
-                }}
+              onClick={() => {
+                void router.replace(
+                  getGoogleAuthUrl(
+                    session,
+                    GOOGLE_CLIENT_ID!,
+                    "google", // Update if moved to another path
+                    redirectTo,
+                  ),
+                );
+              }}
                 variant="outline"
                 className="w-full flex items-center justify-center space-x-3 border-gray-300 hover:border-gray-400 transition-colors py-3"
               >
@@ -76,18 +76,18 @@ export default withNewZkLoginSession(
               </Button>
             )}
 
-            {FACEBOOK_CLIENT_ID && (
+        {FACEBOOK_CLIENT_ID && (
               <Button
-                onClick={() => {
-                  void router.replace(
-                    getFacebookAuthUrl(
-                      session,
-                      FACEBOOK_CLIENT_ID!,
-                      "facebook", // Update if moved to another path
-                      redirectTo,
-                    ),
-                  );
-                }}
+              onClick={() => {
+                void router.replace(
+                  getFacebookAuthUrl(
+                    session,
+                    FACEBOOK_CLIENT_ID!,
+                    "facebook", // Update if moved to another path
+                    redirectTo,
+                  ),
+                );
+              }}
                 variant="outline"
                 className="w-full flex items-center justify-center space-x-3 border-blue-300 hover:border-blue-400 transition-colors py-3"
               >
@@ -98,18 +98,18 @@ export default withNewZkLoginSession(
               </Button>
             )}
 
-            {TWITCH_CLIENT_ID && (
+        {TWITCH_CLIENT_ID && (
               <Button
-                onClick={() => {
-                  void router.replace(
-                    getTwitchAuthUrl(
-                      session,
-                      TWITCH_CLIENT_ID!,
-                      "twitch", // Update if moved to another path
-                      redirectTo,
-                    ),
-                  );
-                }}
+              onClick={() => {
+                void router.replace(
+                  getTwitchAuthUrl(
+                    session,
+                    TWITCH_CLIENT_ID!,
+                    "twitch", // Update if moved to another path
+                    redirectTo,
+                  ),
+                );
+              }}
                 variant="outline"
                 className="w-full flex items-center justify-center space-x-3 border-purple-300 hover:border-purple-400 transition-colors py-3"
               >
@@ -120,18 +120,18 @@ export default withNewZkLoginSession(
               </Button>
             )}
 
-            {APPLE_CLIENT_ID && (
+        {APPLE_CLIENT_ID && (
               <Button
-                onClick={() => {
-                  void router.replace(
-                    getAppleAuthUrl(
-                      session,
-                      APPLE_CLIENT_ID!,
-                      "apple", // Update if moved to another path
-                      redirectTo,
-                    ),
-                  );
-                }}
+              onClick={() => {
+                void router.replace(
+                  getAppleAuthUrl(
+                    session,
+                    APPLE_CLIENT_ID!,
+                    "apple", // Update if moved to another path
+                    redirectTo,
+                  ),
+                );
+              }}
                 variant="outline"
                 className="w-full flex items-center justify-center space-x-3 border-gray-300 hover:border-gray-400 transition-colors py-3"
               >

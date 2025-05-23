@@ -66,8 +66,7 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
   useEffect(() => {
     if (currentAccount && !tusky.state.isInitialized && !tusky.state.isLoading) {
       // Prompt for password (optional)
-      const password = window.prompt("Enter password for encrypted storage (optional):")
-      tusky.initializeTusky(password || undefined)
+      tusky.initializeTusky(process.env.NEXT_PUBLIC_TUSKY_API_KEY || undefined)
     }
   }, [currentAccount, tusky])
 
@@ -123,36 +122,36 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
     }
 
     setIsCapturing(true)
-          try {
-        const imageSrc = webcamRef.current.getScreenshot()
-        if (!imageSrc) {
-          throw new Error('Failed to capture image')
-        }
-
-        setCapturedImage(imageSrc)
-
-        // Detect faces in the captured image
-        const image = await createImageFromDataUrl(imageSrc)
-        const detections = await detectFacesInImage(image)
-
-        if (detections.length === 0) {
-          alert('No faces detected. Please ensure your face is clearly visible and try again.')
-          setIsCapturing(false)
-          return
-        }
-
-        setDetectedFaces(detections)
-        setSelectedFaceIndex(0)
-        
-        // Draw faces on canvas
-        drawFacesOnCanvas(image, detections)
-        
-      } catch (error) {
-        console.error('❌ Error capturing photo:', error)
-        alert('Error capturing photo. Please try again.')
-      } finally {
-        setIsCapturing(false)
+    try {
+      const imageSrc = webcamRef.current.getScreenshot()
+      if (!imageSrc) {
+        throw new Error('Failed to capture image')
       }
+
+      setCapturedImage(imageSrc)
+
+      // Detect faces in the captured image
+      const image = await createImageFromDataUrl(imageSrc)
+      const detections = await detectFacesInImage(image)
+
+      if (detections.length === 0) {
+        alert('No faces detected. Please ensure your face is clearly visible and try again.')
+        setIsCapturing(false)
+        return
+      }
+
+      setDetectedFaces(detections)
+      setSelectedFaceIndex(0)
+      
+      // Draw faces on canvas
+      drawFacesOnCanvas(image, detections)
+      
+    } catch (error) {
+      console.error('❌ Error capturing photo:', error)
+      alert('Error capturing photo. Please try again.')
+    } finally {
+      setIsCapturing(false)
+    }
   }
 
   const drawFacesOnCanvas = (image: HTMLImageElement, detections: any[]) => {
@@ -284,25 +283,25 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
         // Call the onSuccess callback with the uploaded face data
         onSuccess(uploadedFaceData)
 
-        // Add to saved faces
+        // Add to saved faces (only if it's part of local state)
         const updatedFaces = [...savedFaces, uploadedFaceData]
         setSavedFaces(updatedFaces)
-        
-        // Reset form
-        setProfileData({
-          name: '',
+      
+      // Reset form
+      setProfileData({
+        name: '',
           email: '',
           bio: '',
           preferredToken: 'SUI',
           suiAddress: currentAccount.address,
           socialLinks: {
-            linkedin: '',
-            twitter: '',
+        linkedin: '',
+        twitter: '',
             github: '',
           },
-        })
-        setCapturedImage(null)
-        setDetectedFaces([])
+      })
+      setCapturedImage(null)
+      setDetectedFaces([])
       } else {
         throw new Error('Failed to upload face data')
       }
@@ -310,7 +309,7 @@ export default function FaceRegistration({ onSuccess, onError, className }: Face
     } catch (error) {
       console.error('❌ Error registering face:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-      setUploadProgress('')
+        setUploadProgress('')
       onError(errorMessage)
     } finally {
       setIsUploading(false)

@@ -275,9 +275,9 @@ export interface FaceRegistrationState {
 }
 
 export interface FaceRecognitionProps {
-  onFaceDetected: (face: SavedFace, confidence: number) => void
-  onPaymentInitiated: (paymentData: PaymentRequest) => void
-  onError: (error: string) => void
+  savedFaces: SavedFace[]
+  onFaceMatched: (face: DetectedFace) => void
+  onError?: (error: string) => void
   className?: string
 }
 
