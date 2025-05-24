@@ -37,6 +37,9 @@ SUI FacePay enables users to:
 - **Real-time Price Discovery**: Best rates across SUI DEX protocols
 - **Low Slippage**: Optimized routing for minimal price impact
 
+## Demo Video
+
+
 ## 🏗️ Architecture
 
 ```
